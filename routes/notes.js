@@ -309,6 +309,11 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
     }
 });
 
+router.post('/share/:id', authorization, upload.none(), async (req, res) => {
+    const { id } = req.params;
+    console.log(id);
+});
+
 //error handling
 router.use((error, req, res, next) => {
     if (error instanceof multer.MulterError) {
