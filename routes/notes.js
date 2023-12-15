@@ -2,8 +2,9 @@ const router = require('express').Router();
 const pool = require('../db');
 const authorization = require('../middleware/authorization');
 const sanitizeHtml = require('sanitize-html');
-const mime = require('mime-types');
+const { transformToReadableDate } = require('../utils/transformDate');
 
+const mime = require('mime-types');
 const multer = require('multer');
 const uuid = require('uuid').v4;
 /* const storage = multer.diskStorage({
@@ -35,64 +36,38 @@ const s3 = new S3Client({
     region: bucketRegion,
 });
 
-function transformToReadableDate(last_update) {
-    const originalDate = new Date(last_update);
-    const todayDate = new Date();
-
-    //preveri če je isti dan
-    if (
-        originalDate.getFullYear() === todayDate.getFullYear() &&
-        originalDate.getMonth() + 1 === todayDate.getMonth() + 1 &&
-        originalDate.getDate() === todayDate.getDate()
-    ) {
-        const hours = originalDate.getHours();
-        const minutes = originalDate.getMinutes();
-
-        const formattedHours = hours < 10 ? `0${hours}` : hours;
-        const formattedMinutes = minutes < 10 ? `0${minutes}` : minutes;
-
-        const transformedTime = `${formattedHours}:${formattedMinutes}`;
-        return transformedTime;
-    } else {
-        const day = originalDate.getDate();
-        const month = originalDate.getMonth() + 1;
-        const year = originalDate.getFullYear(); // % 100 če hočš samo zadne dve cifre
-
-        // dodamo ničle če je treba
-        const formattedDay = day < 10 ? `0${day}` : day;
-        const formattedMonth = month < 10 ? `0${month}` : month;
-        const formattedYear = year < 10 ? `0${year}` : year;
-
-        // damo v pravilen format
-        const transformedDate = `${formattedDay}/${formattedMonth}/${formattedYear}`;
-        return transformedDate;
-    }
-}
-
 router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
     const page = req.query.page || 1;
     const limit = req.query.limit || 10;
-
     const offset = (page - 1) * limit;
 
     try {
         const notes = await pool.query(
-            'SELECT note_id, title, content, subject, last_update FROM  t_notes WHERE user_id=$1 ORDER BY last_update DESC LIMIT $2 OFFSET $3',
+            'SELECT user_id, note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email FROM t_notes WHERE user_id=$1 UNION SELECT tn.user_id, tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 ORDER BY last_update DESC LIMIT $2 OFFSET $3',
             [req.user.id, limit, offset]
         );
 
-        const finalNotes = notes.rows.map((note) => {
+        let finalNotes = notes.rows.map((note) => {
             note.last_update = transformToReadableDate(note.last_update);
             return note;
         });
 
         //presigned url
-        const finalNotesV2 = await Promise.all(
+        finalNotes = await Promise.all(
             finalNotes.map(async (note) => {
-                const attachments = await pool.query(
-                    'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE user_id=$1 AND note_id=$2',
-                    [req.user.id, note.note_id]
-                );
+                let attachments = [];
+                //da dobimo tudi sharane file
+                if (note.user_id !== req.user.id) {
+                    attachments = await pool.query(
+                        'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE user_id=$1 AND note_id=$2',
+                        [note.user_id, note.note_id]
+                    );
+                } else {
+                    attachments = await pool.query(
+                        'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE user_id=$1 AND note_id=$2',
+                        [req.user.id, note.note_id]
+                    );
+                }
                 //file_name je z uuid, file_original_name je originalno ime
                 if (attachments.rows.length > 0) {
                     let i = 0;
@@ -114,8 +89,7 @@ router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
                 }
             })
         );
-        //console.log(finalNotesV2);
-        res.json(finalNotesV2);
+        res.json(finalNotes);
     } catch (error) {
         console.log(error.message);
         res.status(500).json('Server Error');
@@ -175,6 +149,22 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         const parsedFilesToDelete = JSON.parse(filesToDelete);
         const cleanContent = sanitizeHtml(content);
 
+        let editingUser = req.user.id;
+        //preverimo če obstaja note v shared notih
+        const targetNote = await pool.query('SELECT shared_by, editing_permission FROM t_shared_notes WHERE shared_with=$1 AND note_id=$2', [
+            req.user.id,
+            id,
+        ]);
+        //če torej edita nekdo, ki ni lastnik
+        if (targetNote.rows.length !== 0) {
+            //če nima dovoljenj
+            if (targetNote.rows[0].editing_permission !== 2) {
+                return res.json('Unathorized edit attempt');
+            } else {
+                editingUser = targetNote.rows[0].shared_by;
+            }
+        }
+
         if (parsedFilesToDelete.length !== 0) {
             try {
                 parsedFilesToDelete.forEach(async (file) => {
@@ -187,7 +177,7 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
 
                     const deletedAttachments = await pool.query('DELETE FROM t_attachments WHERE note_id=$1 AND user_id=$2 AND file_name=$3', [
                         file.note_id,
-                        req.user.id,
+                        editingUser,
                         file.file_name,
                     ]);
                 });
@@ -198,8 +188,8 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         }
 
         const updatedNote = await pool.query(
-            'UPDATE t_notes SET title=$1, subject=$2, content=$3, last_update=CURRENT_TIMESTAMP WHERE note_id=$4 AND user_id=$5 RETURNING note_id',
-            [title, subject, cleanContent, id, req.user.id]
+            'UPDATE t_notes SET title=$1, subject=$2, content=$3, last_update=CURRENT_TIMESTAMP, note_version=note_version+1 WHERE note_id=$4 AND user_id=$5 RETURNING note_id',
+            [title, subject, cleanContent, id, editingUser]
         );
 
         try {
@@ -219,7 +209,7 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
 
                     const newAttachment = await pool.query(
                         'INSERT INTO t_attachments (user_id, note_id, file_original_name, file_name, file_extension) VALUES($1, $2, $3, $4, $5)',
-                        [req.user.id, updatedNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
+                        [editingUser, updatedNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
                     );
                 })
             );
@@ -309,9 +299,88 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
     }
 });
 
+router.get('/sharee-data/:id', authorization, upload.none(), async (req, res) => {
+    const { id } = req.params;
+    try {
+        const shareeData = await pool.query('SELECT shared_with_email, editing_permission FROM t_shared_notes WHERE note_id=$1 AND shared_by=$2', [
+            id,
+            req.user.id,
+        ]);
+        res.json(shareeData.rows);
+    } catch (error) {
+        console.log(error.message);
+        res.status(500).json('Server Error');
+    }
+});
+
 router.post('/share/:id', authorization, upload.none(), async (req, res) => {
     const { id } = req.params;
-    console.log(id);
+    const { recipient, editingPermission } = req.body;
+    let canEdit;
+    if (editingPermission === true || editingPermission === 'true') {
+        canEdit = 2;
+    } else if (editingPermission === false || editingPermission === 'false') {
+        canEdit = 1;
+    }
+
+    try {
+        const targetRecipient = await pool.query('SELECT user_id, user_email FROM t_users WHERE user_email=$1', [recipient]);
+        //če prejemnik sploh obstaja
+        if (targetRecipient.rows.length === 0) {
+            return res.json('User does not exist');
+        }
+
+        //če ta share že obstaja
+        const existingShare = await pool.query('SELECT * FROM t_shared_notes WHERE note_id=$1 AND shared_with=$2', [id, targetRecipient.rows[0].user_id]);
+        if (existingShare.rows.length !== 0) {
+            return res.json('Already sharing with this user');
+        }
+
+        const targetNote = await pool.query('SELECT * FROM t_notes WHERE user_id=$1 AND note_id=$2', [req.user.id, id]);
+        //če je ta uporabnik lastnik nota
+        if (targetNote.rows.length === 0) {
+            return res.json('Note does not exist');
+        }
+
+        //vzamemo mail od userja ki shara note
+        const sharingUser = await pool.query('SELECT user_email FROM t_users WHERE user_id=$1', [req.user.id]);
+        if (sharingUser.rows.length === 0) {
+            return res.json('User does not exist');
+        }
+
+        const sharedNote = await pool.query(
+            'INSERT INTO t_shared_notes (note_id, shared_by, shared_with, shared_with_email, shared_by_email, editing_permission) VALUES($1, $2, $3, $4, $5, $6) RETURNING *',
+            [id, req.user.id, targetRecipient.rows[0].user_id, targetRecipient.rows[0].user_email, sharingUser.rows[0].user_email, canEdit]
+        );
+        if (sharedNote.rows.length === 0) {
+            return res.json('Failed to execute request');
+        }
+        res.json('Successfully shared the note');
+    } catch (error) {
+        console.log(error.message);
+        res.status(500).json('Server Error');
+    }
+});
+
+router.post('/remove-share/:id', authorization, upload.none(), async (req, res) => {
+    const { id } = req.params;
+    const { sharee } = req.body; //to je email
+    try {
+        //preveri še če uporabnik obstaja in dobi user_id in zamenjej pol z sharee(email)
+
+        const removedAccess = await pool.query('DELETE FROM t_shared_notes WHERE note_id=$1 AND shared_by=$2 AND shared_with_email=$3', [
+            id,
+            req.user.id,
+            sharee,
+        ]);
+        if (removedAccess.rowCount === 0) {
+            return res.json('Failed to remove permissions');
+        }
+        res.json('Successfully removed permissions for this note');
+    } catch (error) {
+        console.log(error.message);
+        res.status(500).json('Server Error');
+    }
 });
 
 //error handling
