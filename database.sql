@@ -16,7 +16,7 @@ CREATE TABLE t_notes(
   user_id UUID,
   title TEXT NOT NULL,
   content TEXT NULL,
-  note_version INTEGER DEFAULT 1;
+  note_version INTEGER DEFAULT 1,
   last_update TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES t_users(user_id)
@@ -24,11 +24,9 @@ CREATE TABLE t_notes(
 
 CREATE TABLE t_attachments(
     attachment_id SERIAL PRIMARY KEY,
-    user_id UUID,
     note_id INTEGER,
     file_name TEXT NULL,
-    FOREIGN KEY (note_id) REFERENCES t_notes(note_id),
-    FOREIGN KEY (user_id) REFERENCES t_users(user_id)
+    FOREIGN KEY (note_id) REFERENCES t_notes(note_id)
 );
 
 ALTER TABLE t_users

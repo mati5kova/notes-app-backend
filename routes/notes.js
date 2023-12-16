@@ -139,6 +139,20 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         const parsedFilesToDelete = JSON.parse(filesToDelete);
         const cleanContent = sanitizeHtml(content);
 
+        const noteAccess = await pool.query('SELECT COUNT(*) AS cnt FROM t_notes WHERE note_id=$1 AND user_id=$2', [id, req.user.id]);
+        console.log(noteAccess.rows[0].cnt);
+        //console.log(noteAccess.rows[0][0]);
+        if (noteAccess.rows[0].count === 0) {
+            return res.status(401).json('Unauthorized access');
+        }
+        const sharedNoteAccess = await pool.query('SELECT COUNT(*) FROM t_shared_notes WHERE note_id=$1 AND shared_with=$2 AND editing_permission=2', [
+            id,
+            req.user.id,
+        ]);
+        if (sharedNoteAccess.rows[0].count === 0) {
+            return res.status(401).json('Unauthorized access');
+        }
+
         if (parsedFilesToDelete.length !== 0) {
             try {
                 parsedFilesToDelete.forEach(async (file) => {
@@ -201,7 +215,13 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
 router.delete('/delete-note/:id', authorization, upload.none(), async (req, res) => {
     try {
         const { id } = req.params;
-        const attachments = await pool.query('SELECT file_name FROM t_attachments WHERE note_id=$1 AND user_id=$2', [id, req.user.id]);
+
+        const noteAccess = await pool.query('SELECT user_id FROM t_notes WHERE note_id=$1', [id]);
+        if (noteAccess.rows.length === 0 || noteAccess.rows[0].user_id !== req.user.id) {
+            return res.status(401).json('Unauthorized access');
+        }
+
+        const attachments = await pool.query('SELECT file_name FROM t_attachments WHERE note_id=$1', [id]);
         if (attachments.rows.length > 0) {
             attachments.rows.forEach(async (attachment) => {
                 const params = {
@@ -212,9 +232,13 @@ router.delete('/delete-note/:id', authorization, upload.none(), async (req, res)
                 await s3.send(command);
             });
         }
+        const removedAccess = await pool.query('DELETE FROM t_shared_notes WHERE note_id=$1 AND shared_by=$2', [id, req.user.id]);
 
         const deleteAttachments = await pool.query('DELETE FROM t_attachments WHERE note_id=$1', [id]);
         const deleteNote = await pool.query('DELETE FROM t_notes WHERE note_id=$1 AND user_id=$2', [id, req.user.id]);
+        if (deleteNote.rowCount === 0) {
+            return res.json('Unauthorized access');
+        }
 
         res.json('Deleted note');
     } catch (error) {
