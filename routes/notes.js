@@ -55,20 +55,11 @@ router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
         //presigned url
         finalNotes = await Promise.all(
             finalNotes.map(async (note) => {
-                let attachments = [];
-                //da dobimo tudi sharane file
-                if (note.user_id !== req.user.id) {
-                    attachments = await pool.query(
-                        'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE user_id=$1 AND note_id=$2',
-                        [note.user_id, note.note_id]
-                    );
-                } else {
-                    attachments = await pool.query(
-                        'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE user_id=$1 AND note_id=$2',
-                        [req.user.id, note.note_id]
-                    );
-                }
-                //file_name je z uuid, file_original_name je originalno ime
+                const attachments = await pool.query(
+                    'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE note_id=$1',
+                    [note.note_id]
+                );
+
                 if (attachments.rows.length > 0) {
                     let i = 0;
                     let atts = await Promise.all(
@@ -127,11 +118,10 @@ router.post('/new-note', authorization, upload.array('attachments', 5), async (r
                 };
                 const command = new PutObjectCommand(params);
                 const s3UploadResponse = await s3.send(command);
-                //console.log(s3UploadResponse.$metadata.httpStatusCode);
 
                 const newAttachment = await pool.query(
-                    'INSERT INTO t_attachments (user_id, note_id, file_original_name, file_name, file_extension) VALUES($1, $2, $3, $4, $5)',
-                    [req.user.id, newNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
+                    'INSERT INTO t_attachments (note_id, file_original_name, file_name, file_extension) VALUES($1, $2, $3, $4)',
+                    [newNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
                 );
             })
         );
@@ -149,22 +139,6 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         const parsedFilesToDelete = JSON.parse(filesToDelete);
         const cleanContent = sanitizeHtml(content);
 
-        let editingUser = req.user.id;
-        //preverimo če obstaja note v shared notih
-        const targetNote = await pool.query('SELECT shared_by, editing_permission FROM t_shared_notes WHERE shared_with=$1 AND note_id=$2', [
-            req.user.id,
-            id,
-        ]);
-        //če torej edita nekdo, ki ni lastnik
-        if (targetNote.rows.length !== 0) {
-            //če nima dovoljenj
-            if (targetNote.rows[0].editing_permission !== 2) {
-                return res.json('Unathorized edit attempt');
-            } else {
-                editingUser = targetNote.rows[0].shared_by;
-            }
-        }
-
         if (parsedFilesToDelete.length !== 0) {
             try {
                 parsedFilesToDelete.forEach(async (file) => {
@@ -175,9 +149,8 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
                     const command = new DeleteObjectCommand(params);
                     await s3.send(command);
 
-                    const deletedAttachments = await pool.query('DELETE FROM t_attachments WHERE note_id=$1 AND user_id=$2 AND file_name=$3', [
+                    const deletedAttachments = await pool.query('DELETE FROM t_attachments WHERE note_id=$1 AND file_name=$2', [
                         file.note_id,
-                        editingUser,
                         file.file_name,
                     ]);
                 });
@@ -188,8 +161,8 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         }
 
         const updatedNote = await pool.query(
-            'UPDATE t_notes SET title=$1, subject=$2, content=$3, last_update=CURRENT_TIMESTAMP, note_version=note_version+1 WHERE note_id=$4 AND user_id=$5 RETURNING note_id',
-            [title, subject, cleanContent, id, editingUser]
+            'UPDATE t_notes SET title=$1, subject=$2, content=$3, last_update=CURRENT_TIMESTAMP, note_version=note_version+1 WHERE note_id=$4 RETURNING note_id',
+            [title, subject, cleanContent, id]
         );
 
         try {
@@ -208,8 +181,8 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
                     const s3UploadResponse = await s3.send(command);
 
                     const newAttachment = await pool.query(
-                        'INSERT INTO t_attachments (user_id, note_id, file_original_name, file_name, file_extension) VALUES($1, $2, $3, $4, $5)',
-                        [editingUser, updatedNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
+                        'INSERT INTO t_attachments (note_id, file_original_name, file_name, file_extension) VALUES($1, $2, $3, $4)',
+                        [updatedNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
                     );
                 })
             );
@@ -240,7 +213,7 @@ router.delete('/delete-note/:id', authorization, upload.none(), async (req, res)
             });
         }
 
-        const deleteAttachments = await pool.query('DELETE FROM t_attachments WHERE note_id=$1 AND user_id=$2', [id, req.user.id]);
+        const deleteAttachments = await pool.query('DELETE FROM t_attachments WHERE note_id=$1', [id]);
         const deleteNote = await pool.query('DELETE FROM t_notes WHERE note_id=$1 AND user_id=$2', [id, req.user.id]);
 
         res.json('Deleted note');
@@ -268,8 +241,8 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
         const finalNotesV2 = await Promise.all(
             finalSearchedNotes.map(async (note) => {
                 const attachments = await pool.query(
-                    'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE user_id=$1 AND note_id=$2',
-                    [req.user.id, note.note_id]
+                    'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE note_id=$1',
+                    [note.note_id]
                 );
                 //file_name je z uuid, file_original_name je originalno ime
                 if (attachments.rows.length > 0) {
@@ -367,7 +340,6 @@ router.post('/remove-share/:id', authorization, upload.none(), async (req, res) 
     const { sharee } = req.body; //to je email
     try {
         //preveri še če uporabnik obstaja in dobi user_id in zamenjej pol z sharee(email)
-
         const removedAccess = await pool.query('DELETE FROM t_shared_notes WHERE note_id=$1 AND shared_by=$2 AND shared_with_email=$3', [
             id,
             req.user.id,
@@ -383,7 +355,7 @@ router.post('/remove-share/:id', authorization, upload.none(), async (req, res) 
     }
 });
 
-//error handling
+//error handling za multer
 router.use((error, req, res, next) => {
     if (error instanceof multer.MulterError) {
         if (error.code === 'LIMIT_FILE_SIZE') {
