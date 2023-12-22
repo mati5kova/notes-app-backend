@@ -43,7 +43,7 @@ router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
 
     try {
         const notes = await pool.query(
-            'SELECT user_id, note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email FROM t_notes WHERE user_id=$1 UNION SELECT tn.user_id, tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 ORDER BY last_update DESC LIMIT $2 OFFSET $3',
+            'SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email FROM t_notes WHERE user_id=$1 UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 ORDER BY last_update DESC LIMIT $2 OFFSET $3',
             [req.user.id, limit, offset]
         );
 
@@ -140,16 +140,13 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         const cleanContent = sanitizeHtml(content);
 
         const noteAccess = await pool.query('SELECT COUNT(*) AS cnt FROM t_notes WHERE note_id=$1 AND user_id=$2', [id, req.user.id]);
-        console.log(noteAccess.rows[0].cnt);
-        //console.log(noteAccess.rows[0][0]);
-        if (noteAccess.rows[0].count === 0) {
-            return res.status(401).json('Unauthorized access');
-        }
+
         const sharedNoteAccess = await pool.query('SELECT COUNT(*) FROM t_shared_notes WHERE note_id=$1 AND shared_with=$2 AND editing_permission=2', [
             id,
             req.user.id,
         ]);
-        if (sharedNoteAccess.rows[0].count === 0) {
+
+        if (sharedNoteAccess.rows[0].count === 0 && noteAccess.rows[0].count === 0) {
             return res.status(401).json('Unauthorized access');
         }
 
@@ -373,6 +370,54 @@ router.post('/remove-share/:id', authorization, upload.none(), async (req, res) 
             return res.json('Failed to remove permissions');
         }
         res.json('Successfully removed permissions for this note');
+    } catch (error) {
+        console.log(error.message);
+        res.status(500).json('Server Error');
+    }
+});
+
+router.get('/individual-note/:id', authorization, upload.none(), async (req, res) => {
+    const { id } = req.params;
+    try {
+        const notes = await pool.query(
+            'SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email FROM t_notes WHERE user_id=$1 AND note_id=$2 UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 AND sn.note_id=$2',
+            [req.user.id, id]
+        );
+
+        let finalNotes = notes.rows.map((note) => {
+            note.last_update = transformToReadableDate(note.last_update);
+            return note;
+        });
+
+        //presigned url
+        finalNotes = await Promise.all(
+            finalNotes.map(async (note) => {
+                const attachments = await pool.query(
+                    'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE note_id=$1',
+                    [note.note_id]
+                );
+
+                if (attachments.rows.length > 0) {
+                    let i = 0;
+                    let atts = await Promise.all(
+                        attachments.rows.map(async (attachment) => {
+                            const getObjectParams = {
+                                Bucket: bucketName,
+                                Key: attachment.file_name,
+                            };
+                            const command = new GetObjectCommand(getObjectParams);
+                            const url = await getSignedUrl(s3, command, { expiresIn: 5400 }); //5400 - 1.5h
+                            attachment.url = url;
+                            return attachment;
+                        })
+                    );
+                    return { ...note, attachments: atts };
+                } else {
+                    return note;
+                }
+            })
+        );
+        res.json(finalNotes);
     } catch (error) {
         console.log(error.message);
         res.status(500).json('Server Error');
