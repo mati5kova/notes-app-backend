@@ -30,7 +30,7 @@ io.on('connection', (socket) => {
     console.log('New client connected', socket.id);
 
     socket.on('disconnect', () => {
-        console.log('Client disconnected');
+        console.log('Client disconnected', socket.id);
     });
 
     // Handle note update event
@@ -38,6 +38,11 @@ io.on('connection', (socket) => {
         const { noteId } = data;
         // Emit update to clients
         io.emit(`note_${noteId}_updated`, noteId);
+    });
+
+    socket.on('note_shared', (data) => {
+        const { user_email, noteId } = data;
+        io.emit(`note_shared_with_${user_email}`, noteId);
     });
 });
 
