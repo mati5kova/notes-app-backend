@@ -37,12 +37,12 @@ io.on('connection', (socket) => {
     socket.on('note_updated', (data) => {
         const { noteId } = data;
         // Emit update to clients
-        io.emit(`note_${noteId}_updated`, noteId);
+        socket.broadcast.emit(`note_${noteId}_updated`, noteId);
     });
 
     socket.on('note_shared', (data) => {
         const { user_email, noteId } = data;
-        io.emit(`note_shared_with_${user_email}`, noteId);
+        socket.broadcast.emit(`note_shared_with_${user_email}`, noteId);
     });
 });
 

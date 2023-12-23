@@ -151,23 +151,23 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         }
 
         if (parsedFilesToDelete.length !== 0) {
-            try {
-                parsedFilesToDelete.forEach(async (file) => {
-                    const params = {
-                        Bucket: bucketName,
-                        Key: file.file_name,
-                    };
-                    const command = new DeleteObjectCommand(params);
+            for (const file of parsedFilesToDelete) {
+                const params = {
+                    Bucket: bucketName,
+                    Key: file.file_name,
+                };
+                const command = new DeleteObjectCommand(params);
+                try {
                     await s3.send(command);
 
                     const deletedAttachments = await pool.query('DELETE FROM t_attachments WHERE note_id=$1 AND file_name=$2', [
                         file.note_id,
                         file.file_name,
                     ]);
-                });
-            } catch (error) {
-                console.log(error.message);
-                return res.json('Error deleting file(s)');
+                } catch (error) {
+                    console.log(error.message);
+                    return res.json('Error deleting file(s)');
+                }
             }
         }
 
@@ -176,30 +176,32 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
             [title, subject, cleanContent, id]
         );
 
-        try {
-            const files = req.files;
-            const uploadedFiles = await Promise.all(
-                files.map(async (file) => {
-                    const fileExtension = mime.extension(file.mimetype);
-                    const generatedFileName = `${uuid()}-${file.originalname}`;
-                    const params = {
-                        Bucket: bucketName,
-                        Key: generatedFileName,
-                        Body: file.buffer,
-                        ContentType: file.mimetype,
-                    };
-                    const command = new PutObjectCommand(params);
-                    const s3UploadResponse = await s3.send(command);
+        if (req.files.length !== 0) {
+            try {
+                const files = req.files;
+                const uploadedFiles = await Promise.all(
+                    files.map(async (file) => {
+                        const fileExtension = mime.extension(file.mimetype);
+                        const generatedFileName = `${uuid()}-${file.originalname}`;
+                        const params = {
+                            Bucket: bucketName,
+                            Key: generatedFileName,
+                            Body: file.buffer,
+                            ContentType: file.mimetype,
+                        };
+                        const command = new PutObjectCommand(params);
+                        const s3UploadResponse = await s3.send(command);
 
-                    const newAttachment = await pool.query(
-                        'INSERT INTO t_attachments (note_id, file_original_name, file_name, file_extension) VALUES($1, $2, $3, $4)',
-                        [updatedNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
-                    );
-                })
-            );
-        } catch (error) {
-            console.log(error.message);
-            return res.json('Error uploading file(s)');
+                        const newAttachment = await pool.query(
+                            'INSERT INTO t_attachments (note_id, file_original_name, file_name, file_extension) VALUES($1, $2, $3, $4)',
+                            [updatedNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
+                        );
+                    })
+                );
+            } catch (error) {
+                console.log(error.message);
+                return res.json('Error uploading file(s)');
+            }
         }
 
         res.json('Updated successfully');
@@ -398,7 +400,6 @@ router.get('/individual-note/:id', authorization, upload.none(), async (req, res
                 );
 
                 if (attachments.rows.length > 0) {
-                    let i = 0;
                     let atts = await Promise.all(
                         attachments.rows.map(async (attachment) => {
                             const getObjectParams = {
