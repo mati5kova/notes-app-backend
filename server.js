@@ -44,6 +44,11 @@ io.on('connection', (socket) => {
         const { user_email, noteId } = data;
         socket.broadcast.emit(`note_shared_with_${user_email}`, noteId);
     });
+
+    socket.on('share_removed', (data) => {
+        const { user_email, noteId } = data;
+        socket.broadcast.emit(`share_removed_with_${user_email}`, noteId);
+    });
 });
 
 server.listen(5000, () => {
