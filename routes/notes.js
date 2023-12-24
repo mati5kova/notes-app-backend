@@ -327,10 +327,6 @@ router.post('/share/:id', authorization, upload.none(), async (req, res) => {
             return res.json('User does not exist');
         }
 
-        if (targetRecipient.rows[0].user_email === recipient) {
-            return res.json("You can't share note with yourself");
-        }
-
         //če ta share že obstaja
         const existingShare = await pool.query('SELECT * FROM t_shared_notes WHERE note_id=$1 AND shared_with=$2', [id, targetRecipient.rows[0].user_id]);
         if (existingShare.rows.length !== 0) {
@@ -347,6 +343,9 @@ router.post('/share/:id', authorization, upload.none(), async (req, res) => {
         const sharingUser = await pool.query('SELECT user_email FROM t_users WHERE user_id=$1', [req.user.id]);
         if (sharingUser.rows.length === 0) {
             return res.json('User does not exist');
+        }
+        if (sharingUser.rows[0].user_email === recipient) {
+            return res.json("You can't share note with yourself");
         }
 
         const sharedNote = await pool.query(
