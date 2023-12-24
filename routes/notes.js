@@ -26,6 +26,7 @@ const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
 const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
 const bucketName = process.env.AWS_BUCKET_NAME;
 const bucketRegion = process.env.AWS_BUCKET_REGION;
+const FILE_EXPIRATION_TIME = 21600; //6ur
 
 const s3 = new S3Client({
     credentials: {
@@ -69,7 +70,7 @@ router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
                                 Key: attachment.file_name,
                             };
                             const command = new GetObjectCommand(getObjectParams);
-                            const url = await getSignedUrl(s3, command, { expiresIn: 5400 }); //5400 - 1.5h
+                            const url = await getSignedUrl(s3, command, { expiresIn: FILE_EXPIRATION_TIME });
                             attachment.url = url;
                             return attachment;
                         })
@@ -277,7 +278,7 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
                                 Key: attachment.file_name,
                             };
                             const command = new GetObjectCommand(getObjectParams);
-                            const url = await getSignedUrl(s3, command, { expiresIn: 5400 }); //5400 - 1.5h
+                            const url = await getSignedUrl(s3, command, { expiresIn: FILE_EXPIRATION_TIME });
                             attachment.url = url;
                             return attachment;
                         })
@@ -407,7 +408,7 @@ router.get('/individual-note/:id', authorization, upload.none(), async (req, res
                                 Key: attachment.file_name,
                             };
                             const command = new GetObjectCommand(getObjectParams);
-                            const url = await getSignedUrl(s3, command, { expiresIn: 5400 }); //5400 - 1.5h
+                            const url = await getSignedUrl(s3, command, { expiresIn: FILE_EXPIRATION_TIME });
                             attachment.url = url;
                             return attachment;
                         })
