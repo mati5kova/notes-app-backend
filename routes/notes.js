@@ -91,45 +91,68 @@ router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
 router.post('/new-note', authorization, upload.array('attachments', 5), async (req, res) => {
     const { title, subject, content } = req.body;
     const cleanContent = sanitizeHtml(content);
-    let newNote;
+
     try {
-        newNote = await pool.query('INSERT INTO t_notes (user_id, title, subject, content) VALUES($1, $2, $3, $4) RETURNING note_id', [
-            req.user.id,
-            title,
-            subject,
-            cleanContent,
-        ]);
+        const newNote = await pool.query(
+            'INSERT INTO t_notes (user_id, title, subject, content) VALUES($1, $2, $3, $4) RETURNING note_id, last_update, 0 AS editing_permission, null AS shared_by_email',
+            [req.user.id, title, subject, cleanContent]
+        );
+        if (newNote.rows.length === 0) {
+            return res.json({ msg: 'Failed to create the note' });
+        }
+        newNote.rows[0].last_update = transformToReadableDate(newNote.rows[0].last_update);
+        let createdNote = { ...newNote.rows[0], title: title, subject: subject, content: cleanContent };
+        let newAttachmentList = [];
+
+        if (req.files.length > 0) {
+            const files = req.files;
+            const uploadedFiles = await Promise.all(
+                files.map(async (file) => {
+                    const fileExtension = mime.extension(file.mimetype);
+                    const generatedFileName = `${uuid()}-${file.originalname}`;
+                    const params = {
+                        Bucket: bucketName,
+                        Key: generatedFileName,
+                        Body: file.buffer,
+                        ContentType: file.mimetype,
+                    };
+                    const command = new PutObjectCommand(params);
+                    const s3UploadResponse = await s3.send(command);
+
+                    const newAttachment = await pool.query(
+                        'INSERT INTO t_attachments (note_id, file_original_name, file_name, file_extension) VALUES($1, $2, $3, $4) RETURNING attachment_id',
+                        [newNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
+                    );
+
+                    if (newAttachment.rows.length === 0) {
+                        return res.json({ msg: 'Failed to upload attachments' });
+                    }
+
+                    const getObjectParams = {
+                        Bucket: bucketName,
+                        Key: generatedFileName,
+                    };
+                    const newCommand = new GetObjectCommand(getObjectParams);
+                    const url = await getSignedUrl(s3, newCommand, { expiresIn: FILE_EXPIRATION_TIME });
+
+                    newAttachment.rows[0] = {
+                        ...newAttachment.rows[0],
+                        url: url,
+                        file_name: generatedFileName,
+                        file_original_name: file.originalname,
+                        file_extension: fileExtension,
+                    };
+
+                    newAttachmentList = [...newAttachmentList, newAttachment.rows[0]];
+                })
+            );
+
+            createdNote = { ...createdNote, attachments: newAttachmentList };
+        }
+        res.json({ msg: 'Finished uploading', createdNote: createdNote });
     } catch (error) {
         console.log(error.message);
         res.status(500).json('Server Error');
-    }
-
-    //attachments
-    try {
-        const files = req.files;
-        const uploadedFiles = await Promise.all(
-            files.map(async (file) => {
-                const fileExtension = mime.extension(file.mimetype);
-                const generatedFileName = `${uuid()}-${file.originalname}`;
-                const params = {
-                    Bucket: bucketName,
-                    Key: generatedFileName,
-                    Body: file.buffer,
-                    ContentType: file.mimetype,
-                };
-                const command = new PutObjectCommand(params);
-                const s3UploadResponse = await s3.send(command);
-
-                const newAttachment = await pool.query(
-                    'INSERT INTO t_attachments (note_id, file_original_name, file_name, file_extension) VALUES($1, $2, $3, $4)',
-                    [newNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
-                );
-            })
-        );
-        res.json('Finished uploading');
-    } catch (error) {
-        console.log(error.message);
-        res.json('Error uploading file(s)');
     }
 });
 
@@ -433,7 +456,7 @@ router.get('/individual-note/:id', authorization, upload.none(), async (req, res
 router.use((error, req, res, next) => {
     if (error instanceof multer.MulterError) {
         if (error.code === 'LIMIT_FILE_SIZE') {
-            return res.json('File(s) too large');
+            return res.json({ msg: 'File(s) too large' });
         }
     }
 });
