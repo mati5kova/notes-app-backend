@@ -101,7 +101,7 @@ router.post('/new-note', authorization, upload.array('attachments', 5), async (r
             return res.json({ msg: 'Failed to create the note' });
         }
         newNote.rows[0].last_update = transformToReadableDate(newNote.rows[0].last_update);
-        let createdNote = { ...newNote.rows[0], title: title, subject: subject, content: cleanContent };
+        let createdNote = { ...newNote.rows[0], title: title, subject: subject, content: cleanContent, shouldAnimate: 'temporary' };
         let newAttachmentList = [];
 
         if (req.files.length > 0) {
@@ -148,6 +148,7 @@ router.post('/new-note', authorization, upload.array('attachments', 5), async (r
             );
 
             createdNote = { ...createdNote, attachments: newAttachmentList };
+            console.log(createdNote);
         }
         res.json({ msg: 'Finished uploading', createdNote: createdNote });
     } catch (error) {
