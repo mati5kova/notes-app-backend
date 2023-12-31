@@ -164,14 +164,15 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         const parsedFilesToDelete = JSON.parse(filesToDelete);
         const cleanContent = sanitizeHtml(content);
 
-        const noteAccess = await pool.query('SELECT COUNT(*) AS cnt FROM t_notes WHERE note_id=$1 AND user_id=$2', [id, req.user.id]);
+        const noteAccess = await pool.query('SELECT COUNT(*) FROM t_notes WHERE note_id=$1 AND user_id=$2', [id, req.user.id]);
 
         const sharedNoteAccess = await pool.query('SELECT COUNT(*) FROM t_shared_notes WHERE note_id=$1 AND shared_with=$2 AND editing_permission=2', [
             id,
             req.user.id,
         ]);
 
-        if (sharedNoteAccess.rows[0].count === 0 && noteAccess.rows[0].count === 0) {
+        if (Number(sharedNoteAccess.rows[0].count) === 0 && Number(noteAccess.rows[0].count) === 0) {
+            console.log('called here');
             return res.status(401).json('Unauthorized access');
         }
 
