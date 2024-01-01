@@ -303,26 +303,28 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
     try {
         const searchString = req.query.search;
 
-        const searchedNotes = await pool.query(
-            "SELECT note_id, title, subject, content, last_update FROM t_notes WHERE user_id = $1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') ORDER BY last_update DESC",
+        let searchedNotes = await pool.query(
+            "SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email FROM t_notes WHERE user_id=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') ORDER BY last_update DESC",
             [req.user.id, searchString]
         );
 
-        const finalSearchedNotes = searchedNotes.rows.map((note) => {
+        if (searchedNotes.rows.length === 0) {
+            return res.json('No notes found');
+        }
+
+        searchedNotes = searchedNotes.rows.map((note) => {
             note.last_update = transformToReadableDate(note.last_update);
             return note;
         });
 
         //presigned url
-        const finalNotesV2 = await Promise.all(
-            finalSearchedNotes.map(async (note) => {
+        searchedNotes = await Promise.all(
+            searchedNotes.map(async (note) => {
                 const attachments = await pool.query(
                     'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE note_id=$1',
                     [note.note_id]
                 );
-                //file_name je z uuid, file_original_name je originalno ime
                 if (attachments.rows.length > 0) {
-                    let i = 0;
                     let atts = await Promise.all(
                         attachments.rows.map(async (attachment) => {
                             const getObjectParams = {
@@ -341,7 +343,7 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
                 }
             })
         );
-        res.json(finalNotesV2);
+        res.json(searchedNotes);
     } catch (error) {
         console.log(error.message);
         res.status(500).json('Server Error');
