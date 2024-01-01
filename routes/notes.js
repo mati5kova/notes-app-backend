@@ -62,7 +62,6 @@ router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
                 );
 
                 if (attachments.rows.length > 0) {
-                    let i = 0;
                     let atts = await Promise.all(
                         attachments.rows.map(async (attachment) => {
                             const getObjectParams = {
@@ -148,7 +147,6 @@ router.post('/new-note', authorization, upload.array('attachments', 5), async (r
             );
 
             createdNote = { ...createdNote, attachments: newAttachmentList };
-            console.log(createdNote);
         }
         res.json({ msg: 'Finished uploading', createdNote: createdNote });
     } catch (error) {
@@ -164,15 +162,12 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         const parsedFilesToDelete = JSON.parse(filesToDelete);
         const cleanContent = sanitizeHtml(content);
 
-        const noteAccess = await pool.query('SELECT COUNT(*) FROM t_notes WHERE note_id=$1 AND user_id=$2', [id, req.user.id]);
+        const noteAccess = await pool.query(
+            'SELECT COALESCE(n.cnt, 0) AS note_count, COALESCE(s.shared_count, 0) AS shared_note_count FROM (SELECT COUNT(*) AS cnt FROM t_notes WHERE note_id=$1 AND user_id=$2) AS n LEFT JOIN (SELECT COUNT(*) AS shared_count FROM t_shared_notes WHERE note_id=$1 AND shared_with=$2 AND editing_permission=2) AS s ON true',
+            [id, req.user.id]
+        );
 
-        const sharedNoteAccess = await pool.query('SELECT COUNT(*) FROM t_shared_notes WHERE note_id=$1 AND shared_with=$2 AND editing_permission=2', [
-            id,
-            req.user.id,
-        ]);
-
-        if (Number(sharedNoteAccess.rows[0].count) === 0 && Number(noteAccess.rows[0].count) === 0) {
-            console.log('called here');
+        if (noteAccess.rows[0].note_count == 0 && noteAccess.rows[0].shared_note_count == 0) {
             return res.status(401).json('Unauthorized access');
         }
 
@@ -198,9 +193,16 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         }
 
         const updatedNote = await pool.query(
-            'UPDATE t_notes SET title=$1, subject=$2, content=$3, last_update=CURRENT_TIMESTAMP, note_version=note_version+1 WHERE note_id=$4 RETURNING note_id',
+            'UPDATE t_notes SET title=$1, subject=$2, content=$3, last_update=CURRENT_TIMESTAMP, note_version=note_version+1 WHERE note_id=$4 RETURNING note_id, last_update',
             [title, subject, cleanContent, id]
         );
+
+        if (updatedNote.rows.length === 0) {
+            return res.json('Error updating note');
+        }
+
+        updatedNote.rows[0].last_update = transformToReadableDate(updatedNote.rows[0].last_update);
+        let updatedExNote = { ...updatedNote.rows[0], title: title, subject: subject, content: cleanContent };
 
         if (req.files.length !== 0) {
             try {
@@ -220,7 +222,7 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
 
                         const newAttachment = await pool.query(
                             'INSERT INTO t_attachments (note_id, file_original_name, file_name, file_extension) VALUES($1, $2, $3, $4)',
-                            [updatedNote.rows[0].note_id, file.originalname, generatedFileName, fileExtension]
+                            [id, file.originalname, generatedFileName, fileExtension]
                         );
                     })
                 );
@@ -229,8 +231,33 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
                 return res.json('Error uploading file(s)');
             }
         }
+        let atts = [];
+        try {
+            const attachments = await pool.query(
+                'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE note_id=$1',
+                [id]
+            );
+            if (attachments.rows.length > 0) {
+                atts = await Promise.all(
+                    attachments.rows.map(async (attachment) => {
+                        const getObjectParams = {
+                            Bucket: bucketName,
+                            Key: attachment.file_name,
+                        };
+                        const command = new GetObjectCommand(getObjectParams);
+                        const url = await getSignedUrl(s3, command, { expiresIn: FILE_EXPIRATION_TIME });
+                        attachment.url = url;
+                        return attachment;
+                    })
+                );
+            }
+        } catch (error) {
+            console.log(error.message);
+            return res.json('Error retrieving file(s)');
+        }
 
-        res.json('Updated successfully');
+        updatedExNote = { ...updatedExNote, attachments: atts };
+        res.json({ msg: 'Updated successfully', updatedNote: updatedExNote });
     } catch (error) {
         console.log(error.message);
         res.status(500).json('Server Error');
