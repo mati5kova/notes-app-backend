@@ -33,11 +33,14 @@ io.on('connection', (socket) => {
         console.log('Client disconnected', socket.id);
     });
 
-    // Handle note update event
     socket.on('note_updated', (data) => {
         const { noteId } = data;
-        // Emit update to clients
         socket.broadcast.emit(`note_${noteId}_updated`, noteId);
+    });
+
+    socket.on('note_deleted', (data) => {
+        const { noteId } = data;
+        socket.broadcast.emit(`note_${noteId}_deleted`, noteId);
     });
 
     socket.on('note_shared', (data) => {
