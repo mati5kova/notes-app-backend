@@ -382,14 +382,27 @@ router.post('/share/:id', authorization, upload.none(), async (req, res) => {
         }
 
         //če ta share že obstaja
-        const existingShare = await pool.query('SELECT * FROM t_shared_notes WHERE note_id=$1 AND shared_with=$2', [id, targetRecipient.rows[0].user_id]);
-        if (existingShare.rows.length !== 0) {
-            return res.json('Already sharing with this user');
+        const existingShare = await pool.query('SELECT editing_permission FROM t_shared_notes WHERE note_id=$1 AND shared_with=$2', [
+            id,
+            targetRecipient.rows[0].user_id,
+        ]);
+        if (existingShare.rows.length > 0) {
+            if (existingShare.rows[0].editing_permission !== canEdit) {
+                const update = await pool.query('UPDATE t_shared_notes SET editing_permission=$1 WHERE note_id=$2 AND shared_with_email=$3', [
+                    canEdit,
+                    id,
+                    recipient,
+                ]);
+                console.log(update.rows);
+                return res.json('Updated existing permission');
+            } else {
+                return res.json('No change');
+            }
         }
 
-        const targetNote = await pool.query('SELECT * FROM t_notes WHERE user_id=$1 AND note_id=$2', [req.user.id, id]);
+        const targetNote = await pool.query('SELECT COUNT(*) AS cnt FROM t_notes WHERE user_id=$1 AND note_id=$2', [req.user.id, id]);
         //če je ta uporabnik lastnik nota
-        if (targetNote.rows.length === 0) {
+        if (targetNote.rows[0].cnt === 0) {
             return res.json('Note does not exist');
         }
 
@@ -403,7 +416,7 @@ router.post('/share/:id', authorization, upload.none(), async (req, res) => {
         }
 
         const sharedNote = await pool.query(
-            'INSERT INTO t_shared_notes (note_id, shared_by, shared_with, shared_with_email, shared_by_email, editing_permission) VALUES($1, $2, $3, $4, $5, $6) RETURNING *',
+            'INSERT INTO t_shared_notes (note_id, shared_by, shared_with, shared_with_email, shared_by_email, editing_permission) VALUES($1, $2, $3, $4, $5, $6) RETURNING share_id',
             [id, req.user.id, targetRecipient.rows[0].user_id, targetRecipient.rows[0].user_email, sharingUser.rows[0].user_email, canEdit]
         );
         if (sharedNote.rows.length === 0) {
