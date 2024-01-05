@@ -48,6 +48,11 @@ io.on('connection', (socket) => {
         socket.broadcast.emit(`note_shared_with_${user_email}`, noteId);
     });
 
+    socket.on('note_shared_permission_change', (data) => {
+        const { user_email, noteId, editing_permission } = data;
+        socket.broadcast.emit(`note_shared_permission_change_${noteId}_${user_email}`, editing_permission);
+    });
+
     socket.on('share_removed', (data) => {
         const { user_email, noteId } = data;
         socket.broadcast.emit(`share_removed_with_${user_email}`, noteId);

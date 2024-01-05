@@ -393,7 +393,6 @@ router.post('/share/:id', authorization, upload.none(), async (req, res) => {
                     id,
                     recipient,
                 ]);
-                console.log(update.rows);
                 return res.json('Updated existing permission');
             } else {
                 return res.json('No change');
