@@ -44,7 +44,7 @@ router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
 
     try {
         const notes = await pool.query(
-            'SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email FROM t_notes WHERE user_id=$1 UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 ORDER BY last_update DESC LIMIT $2 OFFSET $3',
+            'SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email, note_version FROM t_notes WHERE user_id=$1 UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email, tn.note_version FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 ORDER BY last_update DESC LIMIT $2 OFFSET $3',
             [req.user.id, limit, offset]
         );
 
@@ -100,7 +100,7 @@ router.post('/new-note', authorization, upload.array('attachments', 5), async (r
             return res.json({ msg: 'Failed to create the note' });
         }
         newNote.rows[0].last_update = transformToReadableDate(newNote.rows[0].last_update);
-        let createdNote = { ...newNote.rows[0], title: title, subject: subject, content: cleanContent, shouldAnimate: 'temporary-gray' };
+        let createdNote = { ...newNote.rows[0], title: title, subject: subject, content: cleanContent, shouldAnimate: 'temporary-gray', note_version: 1 };
         let newAttachmentList = [];
 
         if (req.files.length > 0) {
@@ -158,9 +158,14 @@ router.post('/new-note', authorization, upload.array('attachments', 5), async (r
 router.put('/update-note/:id', authorization, upload.array('attachments', 5), async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, subject, content, filesToDelete } = req.body;
+        const { title, subject, content, filesToDelete, noteVersion } = req.body;
         const parsedFilesToDelete = JSON.parse(filesToDelete);
         const cleanContent = sanitizeHtml(content);
+
+        const previousVersion = await pool.query('SELECT note_version FROM t_notes WHERE note_id=$1', [id]);
+        if (previousVersion.rows[0].note_version !== Number(noteVersion)) {
+            return res.json('Old note version');
+        }
 
         const noteAccess = await pool.query(
             'SELECT COALESCE(n.cnt, 0) AS note_count, COALESCE(s.shared_count, 0) AS shared_note_count FROM (SELECT COUNT(*) AS cnt FROM t_notes WHERE note_id=$1 AND user_id=$2) AS n LEFT JOIN (SELECT COUNT(*) AS shared_count FROM t_shared_notes WHERE note_id=$1 AND shared_with=$2 AND editing_permission=2) AS s ON true',
@@ -193,7 +198,7 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         }
 
         const updatedNote = await pool.query(
-            'UPDATE t_notes SET title=$1, subject=$2, content=$3, last_update=CURRENT_TIMESTAMP, note_version=note_version+1 WHERE note_id=$4 RETURNING note_id, last_update',
+            'UPDATE t_notes SET title=$1, subject=$2, content=$3, last_update=CURRENT_TIMESTAMP, note_version=note_version+1 WHERE note_id=$4 RETURNING last_update, note_version',
             [title, subject, cleanContent, id]
         );
 
@@ -202,7 +207,7 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         }
 
         updatedNote.rows[0].last_update = transformToReadableDate(updatedNote.rows[0].last_update);
-        let updatedExNote = { ...updatedNote.rows[0], title: title, subject: subject, content: cleanContent };
+        let updatedExNote = { ...updatedNote.rows[0], title: title, subject: subject, content: cleanContent, note_id: id };
 
         if (req.files.length !== 0) {
             try {
@@ -304,7 +309,7 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
         const searchString = req.query.search;
 
         let searchedNotes = await pool.query(
-            "SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email FROM t_notes WHERE user_id=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') ORDER BY last_update DESC",
+            "SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email, note_version FROM t_notes WHERE user_id=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') ORDER BY last_update DESC",
             [req.user.id, searchString]
         );
 
@@ -452,7 +457,7 @@ router.get('/individual-note/:id', authorization, upload.none(), async (req, res
     const { id } = req.params;
     try {
         const notes = await pool.query(
-            'SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email FROM t_notes WHERE user_id=$1 AND note_id=$2 UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 AND sn.note_id=$2',
+            'SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email, note_version FROM t_notes WHERE user_id=$1 AND note_id=$2 UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email, tn.note_version FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 AND sn.note_id=$2',
             [req.user.id, id]
         );
 
