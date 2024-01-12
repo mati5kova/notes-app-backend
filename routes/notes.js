@@ -309,7 +309,7 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
         const searchString = req.query.search;
 
         let searchedNotes = await pool.query(
-            "SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email, note_version FROM t_notes WHERE user_id=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') ORDER BY last_update DESC",
+            "SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email, note_version FROM t_notes WHERE user_id=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email, tn.note_version FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') ORDER BY last_update DESC",
             [req.user.id, searchString]
         );
 
