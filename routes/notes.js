@@ -89,7 +89,7 @@ router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
 
 router.post('/new-note', authorization, upload.array('attachments', 5), async (req, res) => {
     const { title, subject, content } = req.body;
-    const cleanContent = sanitizeHtml(content);
+    const cleanContent = sanitizeHtml(content.replace(/<p><\/p>/g, '<br>'));
 
     try {
         const newNote = await pool.query(
@@ -160,7 +160,8 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         const { id } = req.params;
         const { title, subject, content, filesToDelete, noteVersion } = req.body;
         const parsedFilesToDelete = JSON.parse(filesToDelete);
-        const cleanContent = sanitizeHtml(content);
+        //<p></p> taga zamenjamo z breaki ker rte tega ne naredi
+        const cleanContent = sanitizeHtml(content.replace(/<p><\/p>/g, '<br>'));
 
         const previousVersion = await pool.query('SELECT note_version FROM t_notes WHERE note_id=$1', [id]);
         if (previousVersion.rows[0].note_version !== Number(noteVersion)) {
