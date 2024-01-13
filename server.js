@@ -1,4 +1,5 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const app = express();
 const http = require('http');
 const { Server } = require('socket.io');
@@ -26,6 +27,16 @@ app.get('/', (req, res) => {
     res.json('server up');
 });
 
+function checkValidSource(jwtToken) {
+    try {
+        jwt.verify(jwtToken, process.env.JWTSECRET);
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+false;
+
 io.on('connection', (socket) => {
     console.log('New client connected', socket.id);
 
@@ -34,28 +45,38 @@ io.on('connection', (socket) => {
     });
 
     socket.on('note_updated', (data) => {
-        const { noteId } = data;
-        socket.broadcast.emit(`note_${noteId}_updated`, noteId);
+        const { noteId, token } = data;
+        if (checkValidSource(token)) {
+            socket.broadcast.emit(`note_${noteId}_updated`, noteId);
+        }
     });
 
     socket.on('note_deleted', (data) => {
-        const { noteId } = data;
-        socket.broadcast.emit(`note_${noteId}_deleted`, noteId);
+        const { noteId, token } = data;
+        if (checkValidSource(token)) {
+            socket.broadcast.emit(`note_${noteId}_deleted`, noteId);
+        }
     });
 
     socket.on('note_shared', (data) => {
-        const { user_email, noteId } = data;
-        socket.broadcast.emit(`note_shared_with_${user_email}`, noteId);
+        const { user_email, noteId, token } = data;
+        if (checkValidSource(token)) {
+            socket.broadcast.emit(`note_shared_with_${user_email}`, noteId);
+        }
     });
 
     socket.on('note_shared_permission_change', (data) => {
-        const { user_email, noteId, editing_permission } = data;
-        socket.broadcast.emit(`note_shared_permission_change_${noteId}_${user_email}`, editing_permission);
+        const { user_email, noteId, editing_permission, token } = data;
+        if (checkValidSource(token)) {
+            socket.broadcast.emit(`note_shared_permission_change_${noteId}_${user_email}`, editing_permission);
+        }
     });
 
     socket.on('share_removed', (data) => {
-        const { user_email, noteId } = data;
-        socket.broadcast.emit(`share_removed_with_${user_email}`, noteId);
+        const { user_email, noteId, token } = data;
+        if (checkValidSource(token)) {
+            socket.broadcast.emit(`share_removed_with_${user_email}`, noteId);
+        }
     });
 });
 
