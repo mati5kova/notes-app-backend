@@ -39,8 +39,6 @@ CREATE TABLE t_shared_notes(
     note_id INTEGER,
     shared_by UUID,
     shared_with UUID,
-    shared_with_email TEXT NULL,
-    shared_by_email TEXT NULL,
     editing_permission INTEGER NULL,
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (note_id) REFERENCES t_notes(note_id),
