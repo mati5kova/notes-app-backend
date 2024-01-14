@@ -44,7 +44,21 @@ router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
 
     try {
         const notes = await pool.query(
-            'SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email, note_version FROM t_notes WHERE user_id=$1 UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email, tn.note_version FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 ORDER BY last_update DESC LIMIT $2 OFFSET $3',
+            `
+        SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, 0 AS editing_permission, null as shared_by_email, tn.note_version
+        FROM t_notes tn
+        WHERE tn.user_id = $1
+
+        UNION
+
+        SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, t_users_shared_by.user_email AS shared_by_email, tn.note_version
+        FROM t_notes tn
+        INNER JOIN t_shared_notes sn ON tn.note_id = sn.note_id
+        INNER JOIN t_users t_users_shared_by ON sn.shared_by = t_users_shared_by.user_id
+        INNER JOIN t_users t_users_shared_with ON sn.shared_with = t_users_shared_with.user_id
+        WHERE t_users_shared_with.user_id = $1
+        ORDER BY last_update DESC LIMIT $2 OFFSET $3;
+        `,
             [req.user.id, limit, offset]
         );
 
@@ -310,7 +324,21 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
         const searchString = req.query.search;
 
         let searchedNotes = await pool.query(
-            "SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email, note_version FROM t_notes WHERE user_id=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email, tn.note_version FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 AND (title ILIKE '%' || $2 || '%' OR content ILIKE '%' || $2 || '%' OR subject ILIKE '%' || $2 || '%') ORDER BY last_update DESC",
+            `
+            SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, 0 AS editing_permission, null AS shared_by_email, tn.note_version
+            FROM t_notes tn
+            WHERE tn.user_id = $1 AND (tn.title ILIKE '%' || $2 || '%' OR tn.content ILIKE '%' || $2 || '%' OR tn.subject ILIKE '%' || $2 || '%')
+
+            UNION
+
+            SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, t_users_shared_by.user_email AS shared_by_email, tn.note_version
+            FROM t_notes tn
+            INNER JOIN t_shared_notes sn ON tn.note_id = sn.note_id
+            INNER JOIN t_users t_users_shared_by ON sn.shared_by = t_users_shared_by.user_id
+            INNER JOIN t_users t_users_shared_with ON sn.shared_with = t_users_shared_with.user_id
+            WHERE t_users_shared_with.user_id = $1 AND (tn.title ILIKE '%' || $2 || '%' OR tn.content ILIKE '%' || $2 || '%' OR tn.subject ILIKE '%' || $2 || '%')
+            ORDER BY last_update DESC;
+            `,
             [req.user.id, searchString]
         );
 
@@ -359,10 +387,10 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
 router.get('/sharee-data/:id', authorization, upload.none(), async (req, res) => {
     const { id } = req.params;
     try {
-        const shareeData = await pool.query('SELECT shared_with_email, editing_permission FROM t_shared_notes WHERE note_id=$1 AND shared_by=$2', [
-            id,
-            req.user.id,
-        ]);
+        const shareeData = await pool.query(
+            'SELECT t.editing_permission, u.user_email AS shared_with_email FROM t_shared_notes AS t JOIN t_users AS u ON t.shared_with = u.user_id WHERE t.shared_by=$1 AND t.note_id=$2',
+            [req.user.id, id]
+        );
         res.json(shareeData.rows);
     } catch (error) {
         console.log(error.message);
@@ -381,8 +409,8 @@ router.post('/share/:id', authorization, upload.none(), async (req, res) => {
     }
 
     try {
-        const targetRecipient = await pool.query('SELECT user_id, user_email FROM t_users WHERE user_email=$1', [recipient]);
         //če prejemnik sploh obstaja
+        const targetRecipient = await pool.query('SELECT user_id FROM t_users WHERE user_email=$1', [recipient]);
         if (targetRecipient.rows.length === 0) {
             return res.json('User does not exist');
         }
@@ -394,10 +422,10 @@ router.post('/share/:id', authorization, upload.none(), async (req, res) => {
         ]);
         if (existingShare.rows.length > 0) {
             if (existingShare.rows[0].editing_permission !== canEdit) {
-                const update = await pool.query('UPDATE t_shared_notes SET editing_permission=$1 WHERE note_id=$2 AND shared_with_email=$3', [
+                const update = await pool.query('UPDATE t_shared_notes SET editing_permission=$1 WHERE note_id=$2 AND shared_with=$3', [
                     canEdit,
                     id,
-                    recipient,
+                    targetRecipient.rows[0].user_id,
                 ]);
                 return res.json('Updated existing permission');
             } else {
@@ -407,7 +435,7 @@ router.post('/share/:id', authorization, upload.none(), async (req, res) => {
 
         const targetNote = await pool.query('SELECT COUNT(*) AS cnt FROM t_notes WHERE user_id=$1 AND note_id=$2', [req.user.id, id]);
         //če je ta uporabnik lastnik nota
-        if (targetNote.rows[0].cnt === 0) {
+        if (targetNote.rows[0].cnt == 0) {
             return res.json('Note does not exist');
         }
 
@@ -421,8 +449,8 @@ router.post('/share/:id', authorization, upload.none(), async (req, res) => {
         }
 
         const sharedNote = await pool.query(
-            'INSERT INTO t_shared_notes (note_id, shared_by, shared_with, shared_with_email, shared_by_email, editing_permission) VALUES($1, $2, $3, $4, $5, $6) RETURNING share_id',
-            [id, req.user.id, targetRecipient.rows[0].user_id, targetRecipient.rows[0].user_email, sharingUser.rows[0].user_email, canEdit]
+            'INSERT INTO t_shared_notes (note_id, shared_by, shared_with, editing_permission) VALUES($1, $2, $3, $4) RETURNING share_id',
+            [id, req.user.id, targetRecipient.rows[0].user_id, canEdit]
         );
         if (sharedNote.rows.length === 0) {
             return res.json('Failed to execute request');
@@ -438,11 +466,16 @@ router.post('/remove-share/:id', authorization, upload.none(), async (req, res) 
     const { id } = req.params;
     const { sharee } = req.body; //to je email
     try {
-        //preveri še če uporabnik obstaja in dobi user_id in zamenjej pol z sharee(email)
-        const removedAccess = await pool.query('DELETE FROM t_shared_notes WHERE note_id=$1 AND shared_by=$2 AND shared_with_email=$3', [
+        //preveri še če uporabnik obstaja in dobi user_id
+        const targetUser = await pool.query('SELECT user_id FROM t_users WHERE user_email=$1', [sharee]);
+        if (targetUser.rows.length === 0) {
+            return res.json('Failed to remove permissions');
+        }
+
+        const removedAccess = await pool.query('DELETE FROM t_shared_notes WHERE note_id=$1 AND shared_by=$2 AND shared_with=$3', [
             id,
             req.user.id,
-            sharee,
+            targetUser.rows[0].user_id,
         ]);
         if (removedAccess.rowCount === 0) {
             return res.json('Failed to remove permissions');
@@ -458,7 +491,20 @@ router.get('/individual-note/:id', authorization, upload.none(), async (req, res
     const { id } = req.params;
     try {
         const notes = await pool.query(
-            'SELECT note_id, title, content, subject, last_update, 0 AS editing_permission, null as shared_by_email, note_version FROM t_notes WHERE user_id=$1 AND note_id=$2 UNION SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, sn.shared_by_email, tn.note_version FROM t_notes tn INNER JOIN t_shared_notes sn ON tn.note_id=sn.note_id WHERE sn.shared_with=$1 AND sn.note_id=$2',
+            `
+            SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, 0 AS editing_permission, null AS shared_by_email, tn.note_version
+            FROM t_notes tn
+            WHERE tn.user_id = $1 AND tn.note_id = $2
+            
+            UNION
+            
+            SELECT tn.note_id, tn.title, tn.content, tn.subject, tn.last_update, sn.editing_permission, t_users_shared_by.user_email AS shared_by_email, tn.note_version
+            FROM t_notes tn
+            INNER JOIN t_shared_notes sn ON tn.note_id = sn.note_id
+            INNER JOIN t_users t_users_shared_by ON sn.shared_by = t_users_shared_by.user_id
+            INNER JOIN t_users t_users_shared_with ON sn.shared_with = t_users_shared_with.user_id
+            WHERE t_users_shared_with.user_id = $1 AND sn.note_id = $2;
+        `,
             [req.user.id, id]
         );
 
