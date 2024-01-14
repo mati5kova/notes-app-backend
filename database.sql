@@ -29,7 +29,6 @@ CREATE TABLE t_attachments(
     attachment_id SERIAL PRIMARY KEY,
     note_id INTEGER,
     file_name TEXT NULL,
-    url TEXT NULL,
     file_extension TEXT NULL,
     file_original_name TEXT NULL,
     FOREIGN KEY (note_id) REFERENCES t_notes(note_id)

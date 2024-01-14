@@ -57,7 +57,7 @@ router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
         finalNotes = await Promise.all(
             finalNotes.map(async (note) => {
                 const attachments = await pool.query(
-                    'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE note_id=$1',
+                    'SELECT attachment_id, file_name, file_original_name, null AS url, file_extension FROM t_attachments WHERE note_id=$1',
                     [note.note_id]
                 );
 
@@ -240,7 +240,7 @@ router.put('/update-note/:id', authorization, upload.array('attachments', 5), as
         let atts = [];
         try {
             const attachments = await pool.query(
-                'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE note_id=$1',
+                'SELECT attachment_id, file_name, file_original_name, null AS url, file_extension FROM t_attachments WHERE note_id=$1',
                 [id]
             );
             if (attachments.rows.length > 0) {
@@ -327,7 +327,7 @@ router.get('/search-notes', authorization, upload.none(), async (req, res) => {
         searchedNotes = await Promise.all(
             searchedNotes.map(async (note) => {
                 const attachments = await pool.query(
-                    'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE note_id=$1',
+                    'SELECT attachment_id, file_name, file_original_name, null AS url, file_extension FROM t_attachments WHERE note_id=$1',
                     [note.note_id]
                 );
                 if (attachments.rows.length > 0) {
@@ -471,7 +471,7 @@ router.get('/individual-note/:id', authorization, upload.none(), async (req, res
         finalNotes = await Promise.all(
             finalNotes.map(async (note) => {
                 const attachments = await pool.query(
-                    'SELECT attachment_id, file_name, file_original_name, url, file_extension FROM t_attachments WHERE note_id=$1',
+                    'SELECT attachment_id, file_name, file_original_name, null AS url, file_extension FROM t_attachments WHERE note_id=$1',
                     [note.note_id]
                 );
 
