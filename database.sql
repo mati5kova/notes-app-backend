@@ -21,7 +21,7 @@ CREATE TABLE t_notes(
   content TEXT NULL,
   note_version INTEGER DEFAULT 1,
   last_update TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  created_at    ,
+  created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES t_users(user_id)
 );
 
