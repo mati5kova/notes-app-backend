@@ -7,15 +7,7 @@ const { transformToReadableDate } = require('../utils/transformDate');
 const mime = require('mime-types');
 const multer = require('multer');
 const uuid = require('uuid').v4;
-/* const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, '../uploads/');
-    },
-    filename: (req, file, cb) => {
-        const { originalname } = file;
-        cb(null, `${uuid()}-${originalname}`);
-    },
-}); */
+
 const storage = multer.memoryStorage();
 const upload = multer({ storage, limits: { fileSize: 100000000 } }); //100mb
 
@@ -26,7 +18,7 @@ const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
 const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
 const bucketName = process.env.AWS_BUCKET_NAME;
 const bucketRegion = process.env.AWS_BUCKET_REGION;
-const FILE_EXPIRATION_TIME = 21600; //6ur
+const FILE_EXPIRATION_TIME = 21600; //21600 -> 6ur
 
 const s3 = new S3Client({
     credentials: {
@@ -39,7 +31,7 @@ const s3 = new S3Client({
 
 router.get('/retrieve-all', authorization, upload.none(), async (req, res) => {
     const page = req.query.page || 1;
-    const limit = req.query.limit || 10;
+    const limit = req.query.limit || 12;
     const offset = (page - 1) * limit;
 
     try {
