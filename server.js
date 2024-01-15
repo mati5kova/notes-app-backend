@@ -9,13 +9,13 @@ const cors = require('cors');
 
 const io = new Server(server, {
     cors: {
-        origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+        origin: '*',
     },
 });
 
 //middleware
 app.use(express.json());
-app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5173' }));
+app.use(cors());
 
 //routes//
 app.use('/auth', require('./routes/jwtAuth'));
